@@ -239,6 +239,14 @@ def reconcile(
     for t in rows:
         ref_index[t.source_id].append(t)
         for value in t.external_refs.values():
+            if t.batch_id and value == t.batch_id:
+                # Membership, not identity. A charge carrying its payout id is
+                # saying "I was part of that payout", not "I am that payout".
+                # Unioning on it merges every component, the payout itself and
+                # the bank deposit into one event -- the whole sweep collapses
+                # into a single figure and the fee vanishes. Batch membership is
+                # pass 3's job, and it already has batch_id to do it with.
+                continue
             ref_index[value].append(t)
     for value, group in sorted(ref_index.items()):
         distinct = {g.id: g for g in group}
@@ -269,10 +277,18 @@ def reconcile(
                 continue
             if i.currency != o.currency or i.abs_amount != o.abs_amount:
                 continue
-            if abs(i.occurred_at - o.occurred_at) > window:
+            already_linked = dsu.find(i.id) == dsu.find(o.id)
+            # The date window is a heuristic for rows that nothing else
+            # connects. When a shared identifier already links the two legs,
+            # proximity has nothing to add and can only do harm: an
+            # international wire, a delayed settlement or a bank holiday
+            # weekend can exceed the window, and the movement would then be
+            # classified as spend on one side and revenue on the other --
+            # inflating both burn and revenue from a single internal transfer.
+            if not already_linked and abs(i.occurred_at - o.occurred_at) > window:
                 continue
-            if dsu.find(i.id) == dsu.find(o.id):
-                conf = 0.99  # already linked by reference; confirm as transfer
+            if already_linked:
+                conf = 0.99  # identity, not proximity
             else:
                 conf = 0.90
                 # Naming the other institution is strong corroboration.

@@ -31,6 +31,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from ..reconciliation.metrics import Balance
 from ..reconciliation.types import Account, RawTxn, SourceRole
 
 
@@ -56,6 +57,11 @@ class SyncCursor:
 class SyncResult:
     rows: list[RawTxn] = field(default_factory=list)
     accounts: list[Account] = field(default_factory=list)
+    # Cash is a *stock*, taken from what the institution says the balance is --
+    # never a sum of transactions, because one missed row makes the number drift
+    # forever. An integration that can report a balance must, or runway is built
+    # on arithmetic instead of on the bank's own answer.
+    balances: list[Balance] = field(default_factory=list)
     cursor: SyncCursor = field(default_factory=SyncCursor)
     # Anything the integration could see but could not faithfully represent.
     # Surfaced rather than dropped: a silently skipped row is a number that is
