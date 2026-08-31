@@ -30,6 +30,10 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Migrations are generated, and a generated file reformatted by hand stops
+# matching what the next autogenerate produces. Their correctness is proved by
+# running them up and down, not by linting them.
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

@@ -245,6 +245,11 @@ class ReconciliationExceptionRow(Base):
     run_id = Column(String, ForeignKey("reconciliation_runs.id"), nullable=False)
     reason = Column(String, nullable=False)
     severity = Column(String, nullable=False, default="review")
+    # Stable across runs: reason plus the rows it concerns. Reconciliation is a
+    # full re-run every time, so without this the same unresolved item would be
+    # inserted nightly and anything a human dismissed would come straight back.
+    # A queue nobody can clear is worse than no queue.
+    dedupe_key = Column(String, nullable=False, index=True)
     txn_ids = Column(JSON, nullable=False)
     candidate_txn_ids = Column(JSON, default=list)
     detail = Column(Text, default="")
@@ -260,6 +265,7 @@ class ReconciliationExceptionRow(Base):
             "status in ('open','resolved','dismissed')", name="ck_exc_status"
         ),
         Index("ix_exc_open", "org_id", "status", "severity"),
+        UniqueConstraint("org_id", "dedupe_key", name="uq_exc_org_key"),
     )
 
 

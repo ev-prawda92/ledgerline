@@ -12,6 +12,9 @@ down:
 migrate:
 	cd backend && .venv/bin/alembic upgrade head
 
+revision:
+	cd backend && .venv/bin/alembic revision --autogenerate -m "$(m)"
+
 test:
 	cd backend && .venv/bin/pytest -q
 
