@@ -22,3 +22,6 @@ out/
 
 # OS
 .DS_Store
+
+# Scratch: files moved aside because the sandbox cannot delete them
+_to_delete/
