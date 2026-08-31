@@ -9,7 +9,7 @@ different days and the numbers will move on their own.
 from __future__ import annotations
 
 import re
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 # Card networks and processors prepend their own noise to merchant names.
 _NOISE_PREFIXES = (

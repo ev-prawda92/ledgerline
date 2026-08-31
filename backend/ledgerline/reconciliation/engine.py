@@ -21,22 +21,21 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
-from typing import Iterable, Sequence
 
 from .normalize import (
     counterparty_similarity,
     internal_hints_for_accounts,
     looks_like_internal_movement,
-    normalize_counterparty,
 )
 from .types import (
     Account,
     EconomicEvent,
-    Evidence,
     EventKind,
+    Evidence,
     MatchRule,
     RawTxn,
     ReconciliationException,
@@ -216,7 +215,8 @@ def reconcile(
         conf, match = best
         used_in.add(match.id)
         link(o, match, MatchRule.TRANSFER_PAIR, conf,
-             f"{o.abs_amount} {o.currency} moved {acct[o.account_id].name} -> {acct[match.account_id].name}")
+             f"{o.abs_amount} {o.currency} moved {acct[o.account_id].name} "
+             f"-> {acct[match.account_id].name}")
         transfer_groups.add(dsu.find(o.id))
 
     # Unpaired inflows that smell like our own rails.
@@ -317,8 +317,8 @@ def reconcile(
             claimed_bank.add(b.id)
             suppressed.add(b.id)
             link(s, b, MatchRule.SPECIALIST_OVER_BANK, round(conf, 2),
-                 f"{s.source} holds the detail for the {b.abs_amount} {b.currency} "
-                 f"line on {acct[b.account_id].name}")
+                 f"{s.source} holds the detail for the {b.abs_amount} "
+                 f"{b.currency} line on {acct[b.account_id].name}")
             break
 
     # ------------------------------------------------------------------
@@ -327,28 +327,28 @@ def reconcile(
     # ------------------------------------------------------------------
     ledger_rows = [t for t in rows if role(t) is SourceRole.LEDGER and t.id not in suppressed]
     primary_rows = [t for t in rows if role(t).is_primary and t.id not in suppressed]
-    for l in ledger_rows:
+    for led in ledger_rows:
         window = timedelta(days=cfg.ledger_window_days)
         candidates = [
             p for p in primary_rows
-            if p.currency == l.currency
-            and p.amount == l.amount
-            and abs(p.occurred_at - l.occurred_at) <= window
+            if p.currency == led.currency
+            and p.amount == led.amount
+            and abs(p.occurred_at - led.occurred_at) <= window
         ]
         if not candidates:
             if cfg.flag_ledger_only:
                 exceptions.append(ReconciliationException(
                     reason="ledger_only_record",
-                    txn_ids=(l.id,),
-                    detail=(f"{l.source} books {l.amount} {l.currency} to "
-                            f"{l.counterparty or 'an unnamed counterparty'} but no "
+                    txn_ids=(led.id,),
+                    detail=(f"{led.source} books {led.amount} {led.currency} to "
+                            f"{led.counterparty or 'an unnamed counterparty'} but no "
                             "primary source reports it. Either an integration is "
                             "missing or this is a manual journal entry."),
                     severity="review",
                 ))
             continue
         scored = sorted(
-            ((counterparty_similarity(l.counterparty or l.description,
+            ((counterparty_similarity(led.counterparty or led.description,
                                       c.counterparty or c.description), c)
              for c in candidates),
             key=lambda pair: (-pair[0], pair[1].id),
@@ -366,18 +366,18 @@ def reconcile(
         if ambiguous or conf < cfg.min_auto_match_confidence:
             exceptions.append(ReconciliationException(
                 reason="ambiguous_ledger_match",
-                txn_ids=(l.id,),
+                txn_ids=(led.id,),
                 candidates=tuple(c.id for _, c in scored[:5]),
-                detail=(f"{l.source} row for {l.amount} {l.currency} matches "
+                detail=(f"{led.source} row for {led.amount} {led.currency} matches "
                         f"{len(scored)} primary records equally well; not merging "
                         "automatically."),
                 severity="review",
             ))
-            suppressed.add(l.id)  # withhold rather than double count
+            suppressed.add(led.id)  # withhold rather than double count
             continue
-        suppressed.add(l.id)
-        link(top, l, MatchRule.LEDGER_ECHO, round(conf, 2),
-             f"{l.source} restates {top.source} record {top.source_id}")
+        suppressed.add(led.id)
+        link(top, led, MatchRule.LEDGER_ECHO, round(conf, 2),
+             f"{led.source} restates {top.source} record {top.source_id}")
 
     # A ledger row never adds value to a metric, matched or not. An unmatched
     # one is usually an accrual or a manual journal entry -- real bookkeeping,
@@ -494,7 +494,9 @@ def _classify(t: RawTxn, r: SourceRole, acct: dict[str, Account]) -> EventKind:
     if t.amount > 0:
         # Money into an owned account from outside is revenue unless a source
         # says otherwise.  Transfers were already claimed in pass 2.
-        return EventKind.REVENUE if r in (SourceRole.PROCESSOR, SourceRole.BANK) else EventKind.UNKNOWN
+        if r in (SourceRole.PROCESSOR, SourceRole.BANK):
+            return EventKind.REVENUE
+        return EventKind.UNKNOWN
     return EventKind.SPEND
 
 

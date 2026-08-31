@@ -8,12 +8,13 @@ all up.
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
 
-from ledgerline.reconciliation import Account, Config, EventKind, RawTxn, SourceRole, reconcile
+from ledgerline.reconciliation import Account, EventKind, RawTxn, SourceRole, reconcile
+from ledgerline.reconciliation.engine import fingerprint
 from ledgerline.reconciliation.metrics import (
     Balance,
     apply_exception_warnings,
@@ -25,7 +26,7 @@ from ledgerline.reconciliation.metrics import (
     runway_months,
 )
 
-UTC = timezone.utc
+UTC = UTC
 JUL = datetime(2026, 7, 1, tzinfo=UTC)
 AUG = datetime(2026, 8, 1, tzinfo=UTC)
 SEP = datetime(2026, 9, 1, tzinfo=UTC)
@@ -92,7 +93,7 @@ def scenario() -> list[RawTxn]:
     ))
 
     # --- AWS on the Ramp card, reported twice by a re-sync, plus a GL echo
-    for dup, tid in enumerate(["t_ramp_aws", "t_ramp_aws_resync"]):
+    for tid in ("t_ramp_aws", "t_ramp_aws_resync"):
         txns.append(RawTxn(
             id=tid, source="ramp", source_id="ramp_771",
             account_id="acc_ramp", amount=Decimal("-18400"), currency="USD",
@@ -297,38 +298,24 @@ def test_metrics_expose_their_own_provenance(result):
 # exception.  These lock the fixes in place.
 # ---------------------------------------------------------------------------
 
-from decimal import Decimal as _D
-from datetime import datetime as _dt
 
-from ledgerline.reconciliation.types import (
-    Account as _Account,
-    RawTxn as _RawTxn,
-    SourceRole as _SourceRole,
-)
-from ledgerline.reconciliation.engine import reconcile as _reconcile, fingerprint as _fingerprint
-from ledgerline.reconciliation.metrics import (
-    Balance as _Balance,
-    cash_on_hand as _cash_on_hand,
-    revenue as _revenue,
-)
-
-_WHEN = _dt(2026, 8, 1)
-_WINDOW = (_dt(2026, 1, 1), _dt(2027, 1, 1))
+_WHEN = datetime(2026, 8, 1)
+_WINDOW = (datetime(2026, 1, 1), datetime(2027, 1, 1))
 
 
 def _bank(name="Mercury operating", source="mercury"):
-    return _Account(id="bank", source=source, role=_SourceRole.BANK, name=name)
+    return Account(id="bank", source=source, role=SourceRole.BANK, name=name)
 
 
-def _inflow(counterparty, description, amount=_D(250000)):
-    return _RawTxn(
+def _inflow(counterparty, description, amount=Decimal(250000)):
+    return RawTxn(
         id="x", source="mercury", source_id="x1", account_id="bank",
         amount=amount, currency="USD", occurred_at=_WHEN,
         counterparty=counterparty, description=description,
     )
 
 
-def test_unrecognised_rail_is_not_silently_booked_as_revenue():
+def test_unrecognised_rail_is_not_silently_booked_asrevenue():
     """An unenumerated bank must not turn our own money into revenue quietly.
 
     Before the fix, INTERNAL_INSTITUTION_HINTS was a hardcoded 14-item tuple:
@@ -336,26 +323,26 @@ def test_unrecognised_rail_is_not_silently_booked_as_revenue():
     with no exception raised at all.
     """
     txn = _inflow("COLUMN NA", "ACH credit COLUMN NA 887766")
-    result = _reconcile([txn], [_bank()])
+    result = reconcile([txn], [_bank()])
     assert result.exceptions, "an unattributed six-figure inflow must be flagged"
     assert result.exceptions[0].reason == "unattributed_inflow"
 
 
 def test_internal_hints_derive_from_the_orgs_own_accounts():
     """Banking at Column should make 'Column' a recognised internal rail."""
-    accounts = [_bank(), _Account(id="col", source="column", role=_SourceRole.BANK,
+    accounts = [_bank(), Account(id="col", source="column", role=SourceRole.BANK,
                                   name="Column settlement")]
     txn = _inflow("COLUMN NA", "ACH credit COLUMN NA 887766")
-    result = _reconcile([txn], accounts)
+    result = reconcile([txn], accounts)
     reasons = {x.reason for x in result.exceptions}
     assert "possible_unmatched_transfer" in reasons
-    assert _revenue(result.events, *_WINDOW).value == 0
+    assert revenue(result.events, *_WINDOW).value == 0
 
 
 def test_generic_account_words_do_not_become_internal_hints():
     """'Mercury operating' must not make every merchant named '...operating' internal."""
-    txn = _inflow("OPERATING THEATRE SUPPLIES LLC", "card payment", amount=_D(400))
-    result = _reconcile([txn], [_bank()])
+    txn = _inflow("OPERATING THEATRE SUPPLIES LLC", "card payment", amount=Decimal(400))
+    result = reconcile([txn], [_bank()])
     assert not any(x.reason == "possible_unmatched_transfer" for x in result.exceptions)
 
 
@@ -366,22 +353,22 @@ def test_fingerprint_covers_fields_that_change_the_outcome():
     claim -- 'these numbers came from exactly these rows' -- unprovable.
     """
     base = dict(id="t1", source="mercury", source_id="m1", account_id="bank",
-                amount=_D(100), currency="USD", occurred_at=_WHEN)
-    plain = _RawTxn(**base)
-    referenced = _RawTxn(**base, external_refs={"stripe_payout_id": "po_zzz"})
-    assert _fingerprint([plain]) != _fingerprint([referenced])
+                amount=Decimal(100), currency="USD", occurred_at=_WHEN)
+    plain = RawTxn(**base)
+    referenced = RawTxn(**base, external_refs={"stripe_payout_id": "po_zzz"})
+    assert fingerprint([plain]) != fingerprint([referenced])
 
-    named = _RawTxn(**base, counterparty="Datadog")
-    assert _fingerprint([plain]) != _fingerprint([named])
+    named = RawTxn(**base, counterparty="Datadog")
+    assert fingerprint([plain]) != fingerprint([named])
 
 
 def test_fingerprint_is_still_stable_for_identical_input():
     base = dict(id="t1", source="mercury", source_id="m1", account_id="bank",
-                amount=_D(100), currency="USD", occurred_at=_WHEN,
+                amount=Decimal(100), currency="USD", occurred_at=_WHEN,
                 counterparty="Datadog", external_refs={"a": "1", "b": "2"})
     # Dict ordering must not leak into the hash.
     other = dict(base, external_refs={"b": "2", "a": "1"})
-    assert _fingerprint([_RawTxn(**base)]) == _fingerprint([_RawTxn(**other)])
+    assert fingerprint([RawTxn(**base)]) == fingerprint([RawTxn(**other)])
 
 
 def test_cash_excludes_foreign_currency_rather_than_adding_it():
@@ -390,17 +377,17 @@ def test_cash_excludes_foreign_currency_rather_than_adding_it():
     Before the fix this returned 2000 'USD' from 1000 USD + 1000 EUR.
     """
     balances = [
-        _Balance("bank", _WHEN, _D(1000), "USD"),
-        _Balance("eur", _WHEN, _D(1000), "EUR"),
+        Balance("bank", _WHEN, Decimal(1000), "USD"),
+        Balance("eur", _WHEN, Decimal(1000), "EUR"),
     ]
-    metric = _cash_on_hand(balances, ["bank", "eur"])
-    assert metric.value == _D(1000)
+    metric = cash_on_hand(balances, ["bank", "eur"])
+    assert metric.value == Decimal(1000)
     assert metric.currency == "USD"
     assert metric.unreconciled_warning and "EUR" in metric.unreconciled_warning
 
 
 def test_cash_is_unwarned_when_every_account_is_reporting_currency():
-    balances = [_Balance("bank", _WHEN, _D(1000), "USD")]
-    metric = _cash_on_hand(balances, ["bank"])
-    assert metric.value == _D(1000)
+    balances = [Balance("bank", _WHEN, Decimal(1000), "USD")]
+    metric = cash_on_hand(balances, ["bank"])
+    assert metric.value == Decimal(1000)
     assert metric.unreconciled_warning is None

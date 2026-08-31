@@ -14,10 +14,10 @@ drill-down and the analyst can cite sources instead of asserting numbers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Sequence
 
 from .types import EconomicEvent, EventKind, RawTxn
 

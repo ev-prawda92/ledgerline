@@ -6,20 +6,26 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 sys.path.insert(0, ".")
 sys.path.insert(0, "tests")
 
-from ledgerline.reconciliation import EventKind, reconcile                      # noqa: E402
-from ledgerline.reconciliation.metrics import (                                 # noqa: E402
-    Balance, burn, cash_on_hand, naive_burn, naive_revenue,
-    revenue, runway_months,
-)
-from test_reconcile import ACCOUNTS, CASH_ACCOUNTS, scenario         # noqa: E402
+from test_reconcile import ACCOUNTS, CASH_ACCOUNTS, scenario  # noqa: E402
 
-UTC = timezone.utc
+from ledgerline.reconciliation import reconcile  # noqa: E402
+from ledgerline.reconciliation.metrics import (  # noqa: E402
+    Balance,
+    burn,
+    cash_on_hand,
+    naive_burn,
+    naive_revenue,
+    revenue,
+    runway_months,
+)
+
+UTC = UTC
 JUL, AUG = datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 8, 1, tzinfo=UTC)
 
 

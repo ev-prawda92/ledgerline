@@ -7,11 +7,11 @@ tested exhaustively without Postgres, and re-run over history at any time.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Mapping, Sequence
 
 
 class SourceRole(str, Enum):
