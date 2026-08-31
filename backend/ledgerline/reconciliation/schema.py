@@ -127,14 +127,22 @@ class RawTransaction(Base):
     category_hint = Column(String)
     external_refs = Column(JSON, default=dict)
     batch_id = Column(String, index=True)
+    # See RawTxn.revision: restatements append, they never update in place.
+    revision = Column(Integer, nullable=False, default=0)
+    voided = Column(Boolean, nullable=False, default=False)
     ingested_at = Column(DateTime(timezone=True), default=_now)
     # Exactly what the API returned, kept forever so a rule change can be
     # replayed against the original payload rather than our interpretation.
     raw_payload = Column(JSON)
     __table_args__ = (
-        UniqueConstraint("org_id", "source", "source_id", name="uq_raw_txn_source"),
+        # Revision is part of the key so a restatement can be stored beside the
+        # row it replaces. Re-ingesting the *same* revision is still a no-op,
+        # so idempotent re-sync is preserved.
+        UniqueConstraint("org_id", "source", "source_id", "revision",
+                         name="uq_raw_txn_source_revision"),
         Index("ix_raw_txn_org_time", "org_id", "occurred_at"),
         Index("ix_raw_txn_match", "org_id", "currency", "amount", "occurred_at"),
+        Index("ix_raw_txn_current", "org_id", "source", "source_id", "revision"),
     )
 
 

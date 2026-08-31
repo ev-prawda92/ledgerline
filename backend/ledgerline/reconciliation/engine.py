@@ -105,12 +105,86 @@ class _DSU:
         return {k: sorted(v) for k, v in out.items()}
 
 
+def current_revisions(
+    rows: Sequence[RawTxn],
+) -> tuple[list[RawTxn], list[RawTxn], list[ReconciliationException]]:
+    """Collapse restated rows to the version that is currently true.
+
+    Sources restate history.  Plaid moves a pending charge to posted at a
+    different amount and can withdraw a transaction outright; a spreadsheet gets
+    edited and re-uploaded.  Handling that as an UPDATE would make runs
+    unreplayable, so restatements arrive as new rows sharing
+    `(source, source_id)` at a higher `revision` and this function decides which
+    one reconciliation sees.
+
+    Returns `(current, superseded, exceptions)`.  Superseded rows are handed
+    back rather than dropped so drill-down can still show what a figure used to
+    be built from.
+
+    A restatement that changes an *amount* raises a review exception.  It is not
+    an error -- it is the correct behaviour of a source -- but a number moving
+    without a new transaction behind it is precisely what a CFO will notice and
+    distrust, so it gets said out loud instead of happening quietly.
+    """
+    by_key: dict[tuple[str, str], list[RawTxn]] = defaultdict(list)
+    for row in rows:
+        by_key[(row.source, row.source_id)].append(row)
+
+    current: list[RawTxn] = []
+    superseded: list[RawTxn] = []
+    exceptions: list[ReconciliationException] = []
+
+    for key, versions in sorted(by_key.items()):
+        ordered = sorted(versions, key=lambda t: (t.revision, t.id))
+        top = ordered[-1].revision
+        # Every row AT the newest revision survives, not just one.  Two rows
+        # sharing (source, source_id, revision) are the same fact ingested
+        # twice -- a re-sync -- and that is the duplicate_record pass's job to
+        # catch and record evidence for.  Swallowing them here would get the
+        # arithmetic right while losing the fact that a re-sync happened, which
+        # is exactly the kind of quiet correctness this layer refuses.
+        newest = [t for t in ordered if t.revision == top]
+        earlier = [t for t in ordered if t.revision < top]
+        superseded.extend(earlier)
+        latest = newest[-1]
+
+        if earlier:
+            previous = earlier[-1]
+            if previous.amount != latest.amount and not latest.voided:
+                exceptions.append(ReconciliationException(
+                    reason="restated_amount",
+                    txn_ids=(previous.id, latest.id),
+                    detail=(f"{key[0]} restated {key[1]}: {previous.amount} -> "
+                            f"{latest.amount} {latest.currency}. Figures that "
+                            "included the earlier amount have changed."),
+                    severity="review",
+                ))
+            elif latest.voided:
+                exceptions.append(ReconciliationException(
+                    reason="withdrawn_by_source",
+                    txn_ids=(latest.id,),
+                    detail=(f"{key[0]} withdrew {key[1]} ({previous.amount} "
+                            f"{previous.currency}). It no longer counts toward "
+                            "any figure."),
+                    severity="review",
+                ))
+
+        if not latest.voided:
+            current.extend(newest)
+
+    current.sort(key=lambda t: (t.occurred_at, t.source, t.source_id, t.id))
+    return current, superseded, exceptions
+
+
 def reconcile(
     txns: Sequence[RawTxn],
     accounts: Sequence[Account],
     config: Config | None = None,
 ) -> ReconciliationResult:
     cfg = config or Config()
+    # Restatements are resolved before anything else looks at a row, so no pass
+    # below can accidentally reconcile against a superseded version.
+    txns, _superseded, revision_exceptions = current_revisions(txns)
     acct = {a.id: a for a in accounts}
     # Derived from this org's own accounts, so the internal-transfer guard works
     # for a company banking somewhere we never hardcoded.
@@ -124,7 +198,7 @@ def reconcile(
         dsu.add(t.id)
 
     evidence: list[Evidence] = []
-    exceptions: list[ReconciliationException] = []
+    exceptions: list[ReconciliationException] = list(revision_exceptions)
     # Records that describe an event but must not contribute value to it.
     suppressed: set[str] = set()
     transfer_groups: set[str] = set()
@@ -516,5 +590,6 @@ def fingerprint(rows: Iterable[RawTxn]) -> str:
             t.source, t.source_id, t.account_id, str(t.amount), t.currency,
             t.occurred_at.isoformat(), t.batch_id or "",
             t.description or "", t.counterparty or "", t.category_hint or "", refs,
+            str(t.revision), str(t.voided),
         ]).encode())
     return h.hexdigest()

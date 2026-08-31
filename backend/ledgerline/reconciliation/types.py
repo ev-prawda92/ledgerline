@@ -93,6 +93,18 @@ class RawTxn:
     # Set when a source reports a batch that expands into components
     # (a Stripe payout covering 214 charges).
     batch_id: str | None = None
+    # Revisions.  Some sources restate history: an aggregator moves a pending
+    # charge to posted at a different amount, or withdraws a transaction
+    # entirely; a spreadsheet is edited and re-uploaded.  None of that may
+    # become an UPDATE, because a mutable row makes a run unreplayable and the
+    # attestation trail a fiction.
+    #
+    # So a restatement arrives as a NEW row sharing (source, source_id) with a
+    # higher `revision`.  Reconciliation reads only the newest revision of each;
+    # earlier ones stay for audit and drill-down.  `voided` is how a source says
+    # "this never happened" without anything being deleted.
+    revision: int = 0
+    voided: bool = False
 
     @property
     def direction(self) -> int:
