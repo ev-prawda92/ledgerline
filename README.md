@@ -62,7 +62,7 @@ Two corollaries that are easy to violate by accident:
 
 ```
 make install      # venv + editable install
-make test         # 24 tests, no database needed — the engine is pure
+make test         # no database needed — the engine is pure
 make demo         # prints the before/after correction above
 make up           # postgres + redis
 make migrate      # alembic upgrade head
